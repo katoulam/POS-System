@@ -1,0 +1,334 @@
+// Prisma schema — mirrors docs/DB_SCHEMA.md. Keep the two in sync.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum EmployeeRole {
+  server
+  bartender
+  kitchen
+  manager
+  owner
+}
+
+enum TableStatus {
+  available
+  occupied
+  needs_cleaning
+}
+
+enum BarTabStatus {
+  open
+  closed
+}
+
+enum SelectionType {
+  single
+  multiple
+}
+
+enum OrderStatus {
+  open
+  sent_to_kitchen
+  in_progress
+  ready
+  completed
+  paid
+  voided
+}
+
+enum PaymentMethod {
+  cash
+  card
+  check
+  gift_card
+}
+
+enum KitchenQueueStatus {
+  queued
+  in_progress
+  done
+}
+
+enum CashoutStatus {
+  open
+  closed
+}
+
+enum DrawerLineTenderType {
+  cash
+  card
+  check
+  gift_card
+  misc
+}
+
+model Employee {
+  id       String       @id @default(uuid())
+  name     String
+  pinHash  String
+  role     EmployeeRole
+  isActive Boolean      @default(true)
+
+  payRates          PayRate[]
+  shifts            Shift[]
+  tipDeclarations   TipDeclaration[]
+  orders            Order[]
+  cashouts          Cashout[]
+  kitchenEvents     KitchenQueueEvent[]
+  drawerSessionsOpened DrawerSession[] @relation("DrawerOpenedBy")
+  drawerSessionsClosed DrawerSession[] @relation("DrawerClosedBy")
+  miscTickets       MiscTicket[]
+}
+
+model PayRate {
+  id             String    @id @default(uuid())
+  employee       Employee  @relation(fields: [employeeId], references: [id])
+  employeeId     String
+  hourlyRate     Decimal   @db.Decimal(10, 2)
+  effectiveFrom  DateTime  @db.Date
+  effectiveTo    DateTime? @db.Date
+}
+
+model Shift {
+  id         String    @id @default(uuid())
+  employee   Employee  @relation(fields: [employeeId], references: [id])
+  employeeId String
+  clockIn    DateTime
+  clockOut   DateTime?
+
+  cashouts        Cashout[]
+  tipDeclarations TipDeclaration[]
+}
+
+model TipDeclaration {
+  id                String   @id @default(uuid())
+  shift             Shift    @relation(fields: [shiftId], references: [id])
+  shiftId           String
+  employee          Employee @relation(fields: [employeeId], references: [id])
+  employeeId        String
+  cashTipsDeclared  Decimal  @db.Decimal(10, 2)
+  cardTipsPaidOut   Decimal  @db.Decimal(10, 2)
+  createdAt         DateTime @default(now())
+}
+
+model Category {
+  id        String   @id @default(uuid())
+  name      String
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+
+  menuItems MenuItem[]
+}
+
+model MenuItem {
+  id              String   @id @default(uuid())
+  category        Category @relation(fields: [categoryId], references: [id])
+  categoryId      String
+  name            String
+  description     String?
+  basePrice       Decimal  @db.Decimal(10, 2)
+  isBuildYourOwn  Boolean  @default(false)
+  sortOrder       Int      @default(0)
+  isActive        Boolean  @default(true)
+
+  modifierGroups        MenuItemModifierGroup[]
+  defaultModifiers      MenuItemDefaultModifier[]
+  orderItems            OrderItem[]
+}
+
+model ModifierGroup {
+  id             String        @id @default(uuid())
+  name           String
+  selectionType  SelectionType
+  isRequired     Boolean       @default(false)
+
+  modifiers   Modifier[]
+  menuItems   MenuItemModifierGroup[]
+}
+
+model Modifier {
+  id               String        @id @default(uuid())
+  modifierGroup    ModifierGroup @relation(fields: [modifierGroupId], references: [id])
+  modifierGroupId  String
+  name             String
+  priceDelta       Decimal       @db.Decimal(10, 2) @default(0)
+
+  defaultOnItems   MenuItemDefaultModifier[]
+  orderItemUsages  OrderItemModifier[]
+}
+
+model MenuItemModifierGroup {
+  menuItem         MenuItem      @relation(fields: [menuItemId], references: [id])
+  menuItemId       String
+  modifierGroup    ModifierGroup @relation(fields: [modifierGroupId], references: [id])
+  modifierGroupId  String
+
+  @@id([menuItemId, modifierGroupId])
+}
+
+model MenuItemDefaultModifier {
+  menuItem    MenuItem @relation(fields: [menuItemId], references: [id])
+  menuItemId  String
+  modifier    Modifier @relation(fields: [modifierId], references: [id])
+  modifierId  String
+
+  @@id([menuItemId, modifierId])
+}
+
+model RestaurantTable {
+  id          String      @id @default(uuid())
+  tableNumber Int         @unique
+  posX        Int         @default(0)
+  posY        Int         @default(0)
+  status      TableStatus @default(available)
+
+  orders Order[]
+}
+
+model BarTab {
+  id           String       @id @default(uuid())
+  customerName String
+  status       BarTabStatus @default(open)
+  createdAt    DateTime     @default(now())
+
+  orders Order[]
+}
+
+model Order {
+  id            String         @id @default(uuid())
+  table         RestaurantTable? @relation(fields: [tableId], references: [id])
+  tableId       String?
+  barTab        BarTab?        @relation(fields: [barTabId], references: [id])
+  barTabId      String?
+  employee      Employee       @relation(fields: [employeeId], references: [id])
+  employeeId    String
+  status        OrderStatus    @default(open)
+  subtotal      Decimal        @db.Decimal(10, 2) @default(0)
+  tax           Decimal        @db.Decimal(10, 2) @default(0)
+  tip           Decimal        @db.Decimal(10, 2) @default(0)
+  total         Decimal        @db.Decimal(10, 2) @default(0)
+  paymentMethod PaymentMethod?
+  cashout       Cashout?       @relation(fields: [cashoutId], references: [id])
+  cashoutId     String?
+  createdAt     DateTime       @default(now())
+  closedAt      DateTime?
+
+  items               OrderItem[]
+  kitchenEvents       KitchenQueueEvent[]
+  cashoutLineItems    CashoutLineItem[]
+  drawerLineItems     DrawerLineItem[]
+}
+
+model OrderItem {
+  id          String   @id @default(uuid())
+  order       Order    @relation(fields: [orderId], references: [id])
+  orderId     String
+  menuItem    MenuItem @relation(fields: [menuItemId], references: [id])
+  menuItemId  String
+  quantity    Int      @default(1)
+  basePrice   Decimal  @db.Decimal(10, 2)
+  notes       String?
+
+  modifiers OrderItemModifier[]
+}
+
+model OrderItemModifier {
+  orderItem    OrderItem @relation(fields: [orderItemId], references: [id])
+  orderItemId  String
+  modifier     Modifier  @relation(fields: [modifierId], references: [id])
+  modifierId   String
+  isAdded      Boolean   // true = added beyond default, false = removed from default
+
+  @@id([orderItemId, modifierId])
+}
+
+model KitchenQueueEvent {
+  id         String              @id @default(uuid())
+  order      Order               @relation(fields: [orderId], references: [id])
+  orderId    String
+  status     KitchenQueueStatus
+  changedBy  Employee            @relation(fields: [changedById], references: [id])
+  changedById String
+  changedAt  DateTime            @default(now())
+}
+
+model Cashout {
+  id            String        @id @default(uuid())
+  employee      Employee      @relation(fields: [employeeId], references: [id])
+  employeeId    String
+  shift         Shift         @relation(fields: [shiftId], references: [id])
+  shiftId       String
+  openedAt      DateTime      @default(now())
+  closedAt      DateTime?
+  baselineTotal Decimal       @db.Decimal(10, 2) @default(0)
+  cashEntered   Decimal?      @db.Decimal(10, 2)
+  netExpected   Decimal       @db.Decimal(10, 2) @default(0)
+  variance      Decimal?      @db.Decimal(10, 2)
+  status        CashoutStatus @default(open)
+
+  orders     Order[]
+  lineItems  CashoutLineItem[]
+}
+
+model CashoutLineItem {
+  id             String        @id @default(uuid())
+  cashout        Cashout       @relation(fields: [cashoutId], references: [id])
+  cashoutId      String
+  order          Order         @relation(fields: [orderId], references: [id])
+  orderId        String
+  billAmount     Decimal       @db.Decimal(10, 2)
+  tipAmount      Decimal       @db.Decimal(10, 2)
+  paymentMethod  PaymentMethod
+  isChecked      Boolean       @default(false)
+  checkedAt      DateTime?
+}
+
+model DrawerSession {
+  id                   String    @id @default(uuid())
+  businessDate         DateTime  @db.Date
+  openedBy             Employee  @relation("DrawerOpenedBy", fields: [openedById], references: [id])
+  openedById           String
+  openingFloat         Decimal   @db.Decimal(10, 2) @default(0)
+  closedBy             Employee? @relation("DrawerClosedBy", fields: [closedById], references: [id])
+  closedById           String?
+  closingCashCounted   Decimal?  @db.Decimal(10, 2)
+  expectedTotal        Decimal   @db.Decimal(10, 2) @default(0)
+  variance             Decimal?  @db.Decimal(10, 2)
+  status               CashoutStatus @default(open)
+
+  lineItems   DrawerLineItem[]
+  miscTickets MiscTicket[]
+}
+
+model DrawerLineItem {
+  id               String                @id @default(uuid())
+  drawerSession    DrawerSession         @relation(fields: [drawerSessionId], references: [id])
+  drawerSessionId  String
+  order            Order?                @relation(fields: [orderId], references: [id])
+  orderId          String?
+  miscTicket       MiscTicket?           @relation(fields: [miscTicketId], references: [id])
+  miscTicketId     String?
+  amount           Decimal               @db.Decimal(10, 2)
+  tenderType       DrawerLineTenderType
+  isChecked        Boolean               @default(false)
+}
+
+model MiscTicket {
+  id                  String        @id @default(uuid())
+  drawerSession       DrawerSession @relation(fields: [drawerSessionId], references: [id])
+  drawerSessionId     String
+  createdBy           Employee      @relation(fields: [createdById], references: [id])
+  createdById         String
+  reason              String
+  amount              Decimal       @db.Decimal(10, 2)
+  createdAt           DateTime      @default(now())
+
+  drawerLineItems DrawerLineItem[]
+}
